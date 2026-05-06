@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { db, auth, handleFirestoreError } from '../lib/firebase';
-import { collection, addDoc, getDocs, query, orderBy, limit, setDoc, doc } from 'firebase/firestore';
+import { useState, useEffect, FormEvent } from 'react';
+import { db, auth, handleFirestoreError, ADMIN_EMAIL } from '../lib/firebase';
+import { collection, getDocs, setDoc, doc, runTransaction } from 'firebase/firestore';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { ScholasticBlockchain } from '../lib/blockchain';
 import { Student, Project, ParticipationRecord, Block } from '../types';
@@ -22,7 +22,7 @@ export default function AdminPanel() {
   const [selectedProject, setSelectedProject] = useState('');
   const [achievement, setAchievement] = useState('');
 
-  const isAdmin = user?.email === 'mhaz1080@gmail.com';
+  const isAdmin = user?.email === ADMIN_EMAIL && user?.emailVerified === true;
 
   useEffect(() => {
     fetchData();
@@ -39,7 +39,7 @@ export default function AdminPanel() {
     }
   };
 
-  const handleAddStudent = async (e: React.FormEvent) => {
+  const handleAddStudent = async (e: FormEvent) => {
     e.preventDefault();
     if (!newStudent.name || !newStudent.id) return;
     try {
@@ -51,7 +51,7 @@ export default function AdminPanel() {
     }
   };
 
-  const handleAddProject = async (e: React.FormEvent) => {
+  const handleAddProject = async (e: FormEvent) => {
     e.preventDefault();
     if (!newProject.name || !newProject.id) return;
     try {
@@ -67,23 +67,40 @@ export default function AdminPanel() {
   const mineRecord = async (record: ParticipationRecord) => {
     setIsMining(true);
     try {
-      const lastBlockQuery = query(collection(db, 'blocks'), orderBy('index', 'desc'), limit(1));
-      const snap = await getDocs(lastBlockQuery);
-      
-      let lastBlock: Block;
-      if (snap.empty) {
-        lastBlock = ScholasticBlockchain.createGenesisBlock();
-        await addDoc(collection(db, 'blocks'), lastBlock);
-      } else {
-        lastBlock = snap.docs[0].data() as Block;
-      }
+      await runTransaction(db, async (tx) => {
+        const metaRef = doc(db, 'meta', 'chain');
+        const metaSnap = await tx.get(metaRef);
 
-      const nextBlock = ScholasticBlockchain.generateNextBlock(lastBlock, [record]);
-      await addDoc(collection(db, 'blocks'), nextBlock);
-      setIsMining(false);
+        let lastBlock: Block;
+        let writeGenesis = false;
+
+        if (!metaSnap.exists()) {
+          lastBlock = ScholasticBlockchain.createGenesisBlock();
+          writeGenesis = true;
+        } else {
+          const meta = metaSnap.data() as { lastIndex: number; lastHash: string };
+          const lastSnap = await tx.get(doc(db, 'blocks', String(meta.lastIndex)));
+          if (!lastSnap.exists()) {
+            throw new Error('Zincir meta verisi tutarsız: son blok bulunamadı');
+          }
+          lastBlock = lastSnap.data() as Block;
+          if (lastBlock.hash !== meta.lastHash) {
+            throw new Error('Zincir meta verisi tutarsız: hash uyuşmuyor');
+          }
+        }
+
+        const nextBlock = ScholasticBlockchain.generateNextBlock(lastBlock, [record]);
+
+        if (writeGenesis) {
+          tx.set(doc(db, 'blocks', String(lastBlock.index)), lastBlock);
+        }
+        tx.set(doc(db, 'blocks', String(nextBlock.index)), nextBlock);
+        tx.set(metaRef, { lastIndex: nextBlock.index, lastHash: nextBlock.hash });
+      });
       setAchievement('');
     } catch (err) {
       handleFirestoreError(err, 'write', 'blocks');
+    } finally {
       setIsMining(false);
     }
   };

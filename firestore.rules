@@ -12,33 +12,64 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && 
+      return isSignedIn() &&
         request.auth.token.email == 'mhaz1080@gmail.com' &&
         request.auth.token.email_verified == true;
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
       return request.resource.data;
     }
 
+    function hasValidPow(hash) {
+      // PoW difficulty = 2: hash must start with "00"
+      return hash.matches('^00.*');
+    }
+
+    function isValidBlockShape(b) {
+      return b.index is number &&
+        b.timestamp is number &&
+        b.nonce is number &&
+        b.hash is string && b.hash.size() == 64 &&
+        b.previousHash is string &&
+        b.data is list;
+    }
+
     // BLOCKCHAIN RULES
     match /blocks/{blockId} {
       allow read: if true; // Public ledger
-      
-      allow create: if isSignedIn() && 
-        incoming().index is number &&
-        incoming().timestamp is number &&
-        incoming().hash is string &&
-        incoming().previousHash is string &&
-        incoming().nonce is number &&
-        incoming().data is list &&
-        incoming().hash.size() == 64; // SHA-256 hash length
-      
+
+      allow create: if isAdmin() &&
+        isValidBlockShape(incoming()) &&
+        blockId == string(incoming().index) &&
+        hasValidPow(incoming().hash) &&
+        (
+          // Genesis block constraints
+          (incoming().index == 0 &&
+           incoming().previousHash == '0' &&
+           incoming().timestamp == 0 &&
+           incoming().data.size() == 0)
+          ||
+          // Non-genesis: previous block must exist and link
+          (incoming().index > 0 &&
+           exists(/databases/$(database)/documents/blocks/$(string(incoming().index - 1))) &&
+           get(/databases/$(database)/documents/blocks/$(string(incoming().index - 1))).data.hash == incoming().previousHash)
+        );
+
       allow update, delete: if false; // IMMUTABILITY: Once written, never changed or deleted.
+    }
+
+    // CHAIN META - tracks the latest block for atomic appends
+    match /meta/{docId} {
+      allow read: if true;
+      allow create, update: if isAdmin() &&
+        docId == 'chain' &&
+        incoming().lastIndex is number &&
+        incoming().lastHash is string &&
+        incoming().lastHash.size() == 64 &&
+        exists(/databases/$(database)/documents/blocks/$(string(incoming().lastIndex))) &&
+        get(/databases/$(database)/documents/blocks/$(string(incoming().lastIndex))).data.hash == incoming().lastHash;
+      allow delete: if false;
     }
 
     // STUDENT & PROJECT RULES - Also restricted for audit trail
