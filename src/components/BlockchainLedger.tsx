@@ -1,17 +1,35 @@
+import { useMemo } from 'react';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { useCollectionData } from 'react-firebase-hooks/firestore';
 import { db } from '../lib/firebase';
+import { ScholasticBlockchain } from '../lib/blockchain';
+import { Block } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Boxes } from 'lucide-react';
 
 export default function BlockchainLedger() {
-  const blocksQuery = query(collection(db, 'blocks'), orderBy('index', 'desc'));
+  const blocksQuery = query(collection(db, 'blocks'), orderBy('index', 'asc'));
   const [blocks, loading] = useCollectionData(blocksQuery);
+
+  const { ascending, descending, validIndices, chainValid, studentCount } = useMemo(() => {
+    const asc = (blocks ?? []) as Block[];
+    const valid = ScholasticBlockchain.validateBlocks(asc);
+    const isValidChain = asc.length > 0 && valid.size === asc.length;
+    const studentIds = new Set<string>();
+    asc.forEach(b => b.data?.forEach(r => r.studentId && studentIds.add(r.studentId)));
+    return {
+      ascending: asc,
+      descending: [...asc].reverse(),
+      validIndices: valid,
+      chainValid: isValidChain,
+      studentCount: studentIds.size,
+    };
+  }, [blocks]);
 
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center p-20 gap-4">
-        <motion.div 
+        <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
         >
@@ -22,16 +40,23 @@ export default function BlockchainLedger() {
     );
   }
 
+  const integrityPercent = ascending.length > 0
+    ? Math.round((validIndices.size / ascending.length) * 100)
+    : 100;
+
   return (
     <div className="space-y-12">
       <div className="flex flex-col md:flex-row md:items-end justify-between border-b-4 border-black pb-8 gap-4">
         <div>
           <h2 className="text-6xl font-black uppercase italic tracking-tighter leading-none">Canlı Defter</h2>
-          <p className="font-mono text-sm opacity-60 mt-2">GERÇEK ZAMANLI İŞLEM AKIŞI // ZİNCİR ÜZERİNDE DOĞRULANDI</p>
+          <p className="font-mono text-sm opacity-60 mt-2">
+            GERÇEK ZAMANLI İŞLEM AKIŞI //{' '}
+            {chainValid ? 'ZİNCİR ÜZERİNDE DOĞRULANDI' : 'UYARI: ZİNCİRDE TUTARSIZLIK'}
+          </p>
         </div>
         <div className="flex gap-4">
           <div className="border-4 border-black px-6 py-2 bg-yellow-100 font-black text-xl italic shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-            {blocks?.length || 0} BLOK
+            {ascending.length} BLOK
           </div>
         </div>
       </div>
@@ -48,7 +73,9 @@ export default function BlockchainLedger() {
 
         <div className="divide-y-4 divide-black">
           <AnimatePresence mode="popLayout">
-            {blocks?.map((block: any, idx) => (
+            {descending.map((block) => {
+              const isValid = validIndices.has(block.index);
+              return (
               <motion.div
                 key={block.hash}
                 initial={{ backgroundColor: '#fff' }}
@@ -59,10 +86,10 @@ export default function BlockchainLedger() {
                 <div className="col-span-1 font-mono font-black text-2xl">
                   #{block.index}
                 </div>
-                
+
                 <div className="col-span-1 md:col-span-3">
                   {block.data && block.data.length > 0 ? (
-                    block.data.map((r: any, ri: number) => (
+                    block.data.map((r, ri: number) => (
                       <div key={ri} className="mb-2 last:mb-0">
                         <div className="font-black text-xl uppercase tracking-tighter leading-tight">
                           {r.studentName}
@@ -79,7 +106,7 @@ export default function BlockchainLedger() {
 
                 <div className="col-span-1 md:col-span-3">
                     {block.data && block.data.length > 0 ? (
-                      block.data.map((r: any, ri: number) => (
+                      block.data.map((r, ri: number) => (
                         <div key={ri} className="mb-2 last:mb-0">
                             <div className="font-bold text-gray-900">{r.projectName}</div>
                             <div className="text-[10px] font-mono opacity-50 uppercase">{r.role}</div>
@@ -98,32 +125,39 @@ export default function BlockchainLedger() {
                 </div>
 
                 <div className="col-span-1 text-right">
-                  <span className="inline-block bg-emerald-300 text-black border-2 border-black text-[10px] font-black px-3 py-1 uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                    Doğrulandı
+                  <span className={`inline-block border-2 border-black text-[10px] font-black px-3 py-1 uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] ${
+                    isValid ? 'bg-emerald-300 text-black' : 'bg-red-500 text-white'
+                  }`}>
+                    {isValid ? 'Doğrulandı' : 'Geçersiz'}
                   </span>
                 </div>
               </motion.div>
-            ))}
+              );
+            })}
           </AnimatePresence>
         </div>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-12">
-        <div className="bg-emerald-400 p-8 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+        <div className={`p-8 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] ${
+          chainValid ? 'bg-emerald-400' : 'bg-red-400'
+        }`}>
           <div className="text-xs font-black uppercase tracking-widest opacity-60 mb-2">Ağ Bütünlüğü</div>
-          <div className="text-6xl font-black italic tracking-tighter">100%</div>
-          <div className="text-sm font-bold uppercase mt-4">Güvenlik Skoru</div>
+          <div className="text-6xl font-black italic tracking-tighter">{integrityPercent}%</div>
+          <div className="text-sm font-bold uppercase mt-4">
+            {validIndices.size}/{ascending.length} Geçerli Blok
+          </div>
         </div>
         <div className="bg-white p-8 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
           <div className="text-xs font-black uppercase tracking-widest opacity-60 mb-2">Aktif Öğrenciler</div>
-          <div className="text-6xl font-black italic tracking-tighter">482</div>
-          <div className="text-sm font-bold uppercase mt-4">Doğrulanmış Profiller</div>
+          <div className="text-6xl font-black italic tracking-tighter">{studentCount}</div>
+          <div className="text-sm font-bold uppercase mt-4">Zincirde Kayıtlı</div>
         </div>
         <div className="bg-black text-white p-8 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-          <div className="text-xs font-black uppercase tracking-widest opacity-40 mb-2">Özetleme Hızı</div>
-          <div className="text-4xl font-black font-mono">0.4ms</div>
-          <div className="text-sm font-bold uppercase mt-4">Ort. Gecikme</div>
+          <div className="text-xs font-black uppercase tracking-widest opacity-40 mb-2">Algoritma</div>
+          <div className="text-4xl font-black font-mono">SHA-256</div>
+          <div className="text-sm font-bold uppercase mt-4">PoW Zorluk: {ScholasticBlockchain.DIFFICULTY}</div>
         </div>
       </div>
     </div>
