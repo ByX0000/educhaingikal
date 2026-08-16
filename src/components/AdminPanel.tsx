@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { db, auth, handleFirestoreError } from '../lib/firebase';
 import { collection, addDoc, getDocs, query, orderBy, limit, setDoc, doc } from 'firebase/firestore';
 import { useAuthState } from 'react-firebase-hooks/auth';
@@ -39,7 +39,7 @@ export default function AdminPanel() {
     }
   };
 
-  const handleAddStudent = async (e: React.FormEvent) => {
+  const handleAddStudent = async (e: FormEvent) => {
     e.preventDefault();
     if (!newStudent.name || !newStudent.id) return;
     try {
@@ -51,7 +51,7 @@ export default function AdminPanel() {
     }
   };
 
-  const handleAddProject = async (e: React.FormEvent) => {
+  const handleAddProject = async (e: FormEvent) => {
     e.preventDefault();
     if (!newProject.name || !newProject.id) return;
     try {
